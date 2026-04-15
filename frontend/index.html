@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>算力市场</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!-- Vue Router -->
+    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="js/api.js"></script>
+    <script src="js/components.js"></script>
+    <script src="js/app.js"></script>
+
+    <script>
+        const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+        const { createRouter, createWebHashHistory } = VueRouter;
+
+        // ========== 市场列表页组件 ==========
+        const MarketPage = {
+            template: `
+                <div class="page-header">
+                    <h1 class="page-title">算力市场</h1>
+                    <p class="page-subtitle">选择合适的 GPU 资源套餐，快速创建您的计算实例</p>
+                </div>
+
+                <div class="filters">
+                    <div class="filter-group">
+                        <label class="filter-label">地区</label>
+                        <select class="filter-select" v-model="filters.region" @change="loadData">
+                            <option value="">全部地区</option>
+                            <option v-for="r in filterOptions.regions" :key="r" :value="r">{{ r }}</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">GPU 型号</label>
+                        <select class="filter-select" v-model="filters.gpu_model" @change="loadData">
+                            <option value="">全部型号</option>
+                            <option v-for="g in filterOptions.gpu_models" :key="g" :value="g">{{ g }}</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">库存状态</label>
+                        <select class="filter-select" v-model="filters.stock_status" @change="loadData">
+                            <option value="">全部</option>
+                            <option value="available">可购买</option>
+                            <option value="scarce">紧张</option>
+                            <option value="sold_out">售罄</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">价格排序</label>
+                        <select class="filter-select" v-model="filters.sort_by_price" @change="loadData">
+                            <option value="">默认</option>
+                            <option value="asc">价格从低到高</option>
+                            <option value="desc">价格从高到低</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="market-list">
+                    <div v-if="loading" class="loading"><div class="spinner"></div></div>
+                    <div v-else-if="packages.length === 0" class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                        </svg>
+                        <h3 class="empty-state-title">暂无套餐</h3>
+                        <p>当前没有符合条件的资源套餐</p>
+                    </div>
+                    <div v-else class="package-grid">
+                        <div v-for="pkg in packages" :key="pkg.id" class="package-card" @click="goToCreate(pkg.id)">
+                            <div class="package-header">
+                                <h3 class="package-name">{{ pkg.name }}</h3>
+                                <span class="stock-badge" :class="pkg.stock_status">{{ getStockStatusText(pkg.stock_status) }}</span>
+                            </div>
+                            <div class="gpu-info">
+                                <span class="gpu-badge">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M4.5 3A1.5 1.5 0 003 4.5v4A1.5 1.5 0 004.5 10h4a1.5 1.5 0 001.5-1.5v-4A1.5 1.5 0 008.5 3h-4z"/>
+                                    </svg>
+                                    {{ pkg.gpu_model }} × {{ pkg.gpu_count }}
+                                </span>
+                                <span class="gpu-badge">{{ pkg.vram }}</span>
+                            </div>
+                            <div class="config-list">
+                                <div class="config-item">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"/></svg>
+                                    <span>{{ pkg.cpu_count }} 核</span>
+                                    <span>{{ pkg.cpu_model }}</span>
+                                </div>
+                                <div class="config-item">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z"/></svg>
+                                    <span>{{ pkg.memory }}</span>
+                                </div>
+                                <div class="config-item">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+                                    <span>{{ pkg.region }}</span>
+                                </div>
+                            </div>
+                            <div class="access-tags">
+                                <span v-if="pkg.supports_ssh" class="access-tag">SSH</span>
+                                <span v-if="pkg.supports_jupyterlab" class="access-tag">JupyterLab</span>
+                            </div>
+                            <div class="price-plans">
+                                <span v-for="plan in pkg.price_plans.slice(0, 3)" :key="plan.id" class="price-tag">
+                                    {{ getPlanTypeText(plan.plan_type) }}: <span class="price">\${{ plan.display_price || plan.price }}</span>
+                                </span>
+                            </div>
+                            <div class="min-price">
+                                起售价 <span class="currency">$</span>{{ pkg.min_price || '-' }}
+                            </div>
+                            <button class="btn btn-primary btn-block" style="margin-top: 1rem" :disabled="pkg.stock_status === 'sold_out'">
+                                {{ pkg.stock_status === 'sold_out' ? '暂无库存' : '立即创建' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `,
+            setup() {
+                const packages = ref([]);
+                const loading = ref(true);
+                const filterOptions = reactive({ regions: [], gpu_models: [] });
+                const filters = reactive({ region: '', gpu_model: '', stock_status: '', sort_by_price: '' });
+
+                const loadData = async () => {
+                    loading.value = true;
+                    try {
+                        const activeFilters = Object.fromEntries(
+                            Object.entries(filters).filter(([_, v]) => v !== '')
+                        );
+                        const [marketRes, filtersRes] = await Promise.all([
+                            Api.getMarketList(activeFilters),
+                            Api.getFilters()
+                        ]);
+                        packages.value = marketRes.data || [];
+                        filterOptions.regions = filtersRes.data?.regions || [];
+                        filterOptions.gpu_models = filtersRes.data?.gpu_models || [];
+                    } catch (error) {
+                        Components.toast('加载失败: ' + error.message, 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const getStockStatusText = (status) => ({ available: '可购买', scarce: '紧张', sold_out: '售罄' }[status] || status);
+                const getPlanTypeText = (type) => ({ hourly: '按量', daily: '包天', weekly: '包周', monthly: '包月' }[type] || type);
+
+                const goToCreate = (packageId) => {
+                    router.push({ name: 'create', params: { packageId } });
+                };
+
+                onMounted(() => loadData());
+
+                return { packages, loading, filterOptions, filters, loadData, getStockStatusText, getPlanTypeText, goToCreate };
+            }
+        };
+
+        // ========== 创建实例页组件 ==========
+        const CreatePage = {
+            template: `
+                <div>
+                    <div class="page-header">
+                        <button class="btn btn-ghost" @click="router.push({ name: 'market' })">← 返回市场</button>
+                        <h1 class="page-title" style="margin-top: 1rem">创建实例</h1>
+                    </div>
+
+                    <div v-if="loading" class="loading"><div class="spinner"></div></div>
+                    <div v-else class="create-layout">
+                        <div class="create-main">
+                            <!-- 资源确认区 -->
+                            <div class="form-section">
+                                <h3 class="form-section-title">资源配置</h3>
+                                <div class="config-list" style="margin-bottom: 1rem;">
+                                    <div class="config-item">GPU: <span class="config-value">{{ data.package.gpu_model }} × {{ data.package.gpu_count }}</span></div>
+                                    <div class="config-item">显存: <span class="config-value">{{ data.package.vram }}</span></div>
+                                    <div class="config-item">CPU: <span class="config-value">{{ data.package.cpu_count }} 核 {{ data.package.cpu_model }}</span></div>
+                                    <div class="config-item">内存: <span class="config-value">{{ data.package.memory }}</span></div>
+                                    <div class="config-item">地区: <span class="config-value">{{ data.package.region }}</span></div>
+                                    <div class="config-item">驱动: <span class="config-value">{{ data.package.driver_version }}</span></div>
+                                </div>
+                                <div class="access-tags">
+                                    <span v-if="data.package.supports_ssh" class="access-tag">SSH</span>
+                                    <span v-if="data.package.supports_jupyterlab" class="access-tag">JupyterLab</span>
+                                </div>
+                            </div>
+
+                            <!-- 价格方案选择 -->
+                            <div class="form-section">
+                                <h3 class="form-section-title">选择价格方案</h3>
+                                <div class="radio-group">
+                                    <div v-for="plan in data.price_plans" :key="plan.id" class="radio-option">
+                                        <input type="radio" name="price_plan" :value="plan.id" v-model="selectedPlanId" @change="updateSummary">
+                                        <label>
+                                            <span class="radio-title">{{ getPlanTypeText(plan.plan_type) }}</span>
+                                            <span class="radio-price">\${{ plan.display_price || plan.price }}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 镜像选择 -->
+                            <div class="form-section">
+                                <h3 class="form-section-title">选择镜像</h3>
+                                <div class="image-list">
+                                    <div v-for="image in data.images" :key="image.id"
+                                         class="image-card"
+                                         :class="{ selected: selectedImageId === image.id, warning: image.compatibility_status === 'warning' }"
+                                         @click="selectImage(image.id)">
+                                        <input type="radio" name="image" :value="image.id" v-model="selectedImageId">
+                                        <div class="image-info">
+                                            <div class="image-name">{{ image.name }}</div>
+                                            <div class="image-meta">{{ image.base_system }} | CUDA {{ image.cuda_version }} | {{ image.framework }}</div>
+                                            <div class="image-meta">更新于: {{ formatRelativeTime(image.updated_at) }}</div>
+                                        </div>
+                                        <span class="compatibility-badge" :class="image.compatibility_status">{{ image.compatibility_text }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- SSH 配置 -->
+                            <div class="form-section">
+                                <h3 class="form-section-title">SSH 访问配置</h3>
+                                <div class="radio-group" style="margin-bottom: 1rem;">
+                                    <div class="radio-option">
+                                        <input type="radio" name="ssh_mode" value="public_key" v-model="formData.ssh_mode">
+                                        <label><span class="radio-title">SSH 公钥</span></label>
+                                    </div>
+                                    <div class="radio-option">
+                                        <input type="radio" name="ssh_mode" value="password" v-model="formData.ssh_mode">
+                                        <label><span class="radio-title">密码</span></label>
+                                    </div>
+                                </div>
+
+                                <div v-if="formData.ssh_mode === 'public_key'">
+                                    <div class="form-group">
+                                        <label class="form-label required">SSH 公钥</label>
+                                        <textarea class="form-input" rows="3" v-model="formData.ssh_public_key" placeholder="ssh-rsa AAAA..."></textarea>
+                                        <p class="form-hint">粘贴您的 SSH 公钥内容</p>
+                                    </div>
+                                </div>
+                                <div v-else>
+                                    <div class="form-group">
+                                        <label class="form-label required">初始化密码</label>
+                                        <input type="password" class="form-input" v-model="formData.ssh_password" placeholder="设置实例密码">
+                                        <p class="form-hint">密码将用于 SSH 登录</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 实例名称 -->
+                            <div class="form-section">
+                                <h3 class="form-section-title">实例名称</h3>
+                                <div class="form-group">
+                                    <label class="form-label required">实例名称</label>
+                                    <input type="text" class="form-input" v-model="formData.name" maxlength="50" placeholder="my-instance">
+                                    <p class="form-hint">仅支持字母、数字、下划线和连字符</p>
+                                </div>
+                            </div>
+
+                            <!-- JupyterLab 说明 -->
+                            <div class="form-section" style="background: #eff6ff; padding: 1rem; border-radius: 0.5rem; border: 1px solid #bfdbfe;">
+                                <p style="font-size: 0.875rem; color: #1e40af;">
+                                    <strong>JupyterLab:</strong> 创建完成后可直接打开 JupyterLab 进行开发工作。
+                                </p>
+                            </div>
+
+                            <button class="btn btn-primary btn-block" style="margin-top: 1.5rem" @click="submit" :disabled="submitting">
+                                {{ submitting ? '创建中...' : '创建实例' }}
+                            </button>
+                        </div>
+
+                        <div class="create-sidebar">
+                            <div class="summary-card">
+                                <h3 class="summary-title">费用摘要</h3>
+                                <div class="summary-item">
+                                    <span class="summary-item-label">资源套餐</span>
+                                    <span class="summary-item-value">{{ data.package.name }}</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="summary-item-label">地区</span>
+                                    <span class="summary-item-value">{{ data.package.region }}</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="summary-item-label">GPU</span>
+                                    <span class="summary-item-value">{{ data.package.gpu_model }} × {{ data.package.gpu_count }}</span>
+                                </div>
+                                <div v-if="selectedPlan" class="summary-item">
+                                    <span class="summary-item-label">价格方案</span>
+                                    <span class="summary-item-value">{{ getPlanTypeText(selectedPlan.plan_type) }}</span>
+                                </div>
+                                <div v-if="selectedImage" class="summary-item">
+                                    <span class="summary-item-label">镜像</span>
+                                    <span class="summary-item-value">{{ selectedImage.name }}</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="summary-item-label">计费规则</span>
+                                    <span class="summary-item-value">创建中不计费</span>
+                                </div>
+                                <div class="summary-total">
+                                    <div class="label">当前选择</div>
+                                    <div class="value">{{ selectedPlan ? '$' + (selectedPlan.display_price || selectedPlan.price) : '-' }}</div>
+                                </div>
+                                <div v-if="data.balance" :class="data.balance.is_enough ? 'balance-ok' : 'balance-warning'">
+                                    {{ data.balance.is_enough ? '余额充足' : '余额不足，请充值' }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `,
+            props: ['packageId'],
+            setup(props) {
+                const loading = ref(true);
+                const submitting = ref(false);
+                const data = reactive({ package: {}, price_plans: [], images: [], balance: null });
+                const selectedPlanId = ref(null);
+                const selectedImageId = ref(null);
+                const formData = reactive({ name: '', ssh_public_key: '', ssh_password: '', ssh_mode: 'public_key' });
+
+                const selectedPlan = computed(() => data.price_plans.find(p => p.id === selectedPlanId.value));
+                const selectedImage = computed(() => data.images.find(i => i.id === selectedImageId.value));
+
+                const loadData = async () => {
+                    loading.value = true;
+                    try {
+                        const res = await Api.getCreateInit(props.packageId);
+                        Object.assign(data, res.data);
+                        if (data.price_plans.length > 0) selectedPlanId.value = data.price_plans[0].id;
+                        if (data.images.length > 0) selectedImageId.value = data.images[0].id;
+                    } catch (error) {
+                        Components.toast('加载失败: ' + error.message, 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const getPlanTypeText = (type) => ({ hourly: '按量', daily: '包天', weekly: '包周', monthly: '包月' }[type] || type);
+                const formatRelativeTime = (dateString) => Components.formatRelativeTime(dateString);
+
+                const selectImage = (id) => { selectedImageId.value = id; };
+                const updateSummary = () => {};
+
+                const submit = async () => {
+                    if (!selectedPlanId.value) { Components.toast('请选择价格方案', 'error'); return; }
+                    if (!selectedImageId.value) { Components.toast('请选择镜像', 'error'); return; }
+                    if (!formData.name || !/^[a-zA-Z0-9_-]+$/.test(formData.name)) {
+                        Components.toast('请输入合法的实例名称', 'error'); return;
+                    }
+                    if (formData.ssh_mode === 'public_key' && !formData.ssh_public_key) {
+                        Components.toast('请输入 SSH 公钥', 'error'); return;
+                    }
+                    if (formData.ssh_mode === 'password' && !formData.ssh_password) {
+                        Components.toast('请输入密码', 'error'); return;
+                    }
+
+                    submitting.value = true;
+                    try {
+                        const res = await Api.createInstance({
+                            user_id: 1,
+                            resource_package_id: props.packageId,
+                            price_plan_id: selectedPlanId.value,
+                            name: formData.name,
+                            image_id: selectedImageId.value,
+                            ssh_public_key: formData.ssh_mode === 'public_key' ? formData.ssh_public_key : null,
+                            ssh_password: formData.ssh_mode === 'password' ? formData.ssh_password : null,
+                        });
+                        if (res.data?.task_id) {
+                            router.push({ name: 'creating', params: { taskId: res.data.task_id } });
+                        }
+                    } catch (error) {
+                        Components.toast(error.message || '创建失败', 'error');
+                    } finally {
+                        submitting.value = false;
+                    }
+                };
+
+                onMounted(() => loadData());
+
+                return { loading, submitting, data, selectedPlanId, selectedImageId, formData, selectedPlan, selectedImage, loadData, getPlanTypeText, formatRelativeTime, selectImage, updateSummary, submit };
+            }
+        };
+
+        // ========== 创建中/结果页组件 ==========
+        const CreatingPage = {
+            template: `
+                <div class="creating-status">
+                    <div v-if="loading" class="loading"><div class="spinner"></div></div>
+                    <template v-else>
+                        <div class="status-icon" :class="statusConfig.icon">
+                            <svg v-if="status === 'pending'" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+                            <svg v-else-if="status === 'creating'" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                            <svg v-else-if="status === 'running'" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                            <svg v-else xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+                        </div>
+                        <h2 class="status-title">{{ statusConfig.title }}</h2>
+                        <p class="status-message">{{ statusConfig.message }}</p>
+
+                        <div class="status-details">
+                            <div class="status-detail-item">
+                                <span class="label">状态</span>
+                                <span class="value">{{ statusData.status_text || status }}</span>
+                            </div>
+                        </div>
+
+                        <div class="status-actions">
+                            <button v-if="status === 'running'" class="btn btn-primary" @click="router.push({ name: 'instance-detail', params: { instanceId: statusData.instance_id } })">查看实例</button>
+                            <button v-if="status === 'failed'" class="btn btn-primary" @click="router.push({ name: 'market' })">重新创建</button>
+                            <button v-if="status === 'pending' || status === 'creating'" class="btn btn-ghost" @click="cancel">取消创建</button>
+                            <button class="btn btn-ghost" @click="router.push({ name: 'market' })">返回市场</button>
+                        </div>
+                    </template>
+                </div>
+            `,
+            props: ['taskId'],
+            setup(props) {
+                const loading = ref(true);
+                const statusData = reactive({});
+                let pollInterval = null;
+
+                const statusConfig = computed(() => ({
+                    pending: { icon: 'pending', title: '等待创建', message: '正在准备创建实例...' },
+                    creating: { icon: 'creating', title: '创建中', message: '实例正在创建中，请稍候...' },
+                    running: { icon: 'running', title: '创建成功', message: '实例已创建成功！' },
+                    failed: { icon: 'failed', title: '创建失败', message: statusData.error_message || '实例创建失败' },
+                    cancelled: { icon: 'cancelled', title: '已取消', message: '创建已取消' },
+                }[statusData.status] || { icon: 'pending', title: '加载中', message: '' }));
+
+                const status = computed(() => statusData.status || 'pending');
+
+                const loadStatus = async () => {
+                    try {
+                        const res = await Api.getCreateStatus(props.taskId);
+                        Object.assign(statusData, res.data);
+                        if (statusData.status === 'pending' || statusData.status === 'creating') {
+                            if (!pollInterval) pollInterval = setInterval(loadStatus, 3000);
+                        } else if (pollInterval) {
+                            clearInterval(pollInterval);
+                            pollInterval = null;
+                        }
+                    } catch (error) {
+                        Components.toast('加载失败', 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const cancel = async () => {
+                    if (!await Components.confirm('确认取消', '确定要取消创建实例吗？')) return;
+                    try {
+                        await Api.cancelCreate(props.taskId);
+                        Components.toast('创建已取消');
+                        loadStatus();
+                    } catch (error) {
+                        Components.toast(error.message || '取消失败', 'error');
+                    }
+                };
+
+                onMounted(() => loadStatus());
+                onUnmounted(() => { if (pollInterval) clearInterval(pollInterval); });
+
+                return { loading, statusData, statusConfig, status, cancel };
+            }
+        };
+
+        // ========== 实例详情页组件 ==========
+        const InstanceDetailPage = {
+            template: `
+                <div>
+                    <div class="page-header">
+                        <button class="btn btn-ghost" @click="router.push({ name: 'instances' })">← 返回实例列表</button>
+                    </div>
+
+                    <div v-if="loading" class="loading"><div class="spinner"></div></div>
+                    <template v-else-if="data">
+                        <div class="instance-detail-header">
+                            <div>
+                                <h1 class="instance-detail-title">{{ data.name }}</h1>
+                                <p class="instance-detail-meta">{{ formatDateTime(data.created_at) }}</p>
+                            </div>
+                            <span class="instance-status" :class="data.status">{{ data.status_text || data.status }}</span>
+                        </div>
+
+                        <div class="detail-grid">
+                            <div class="detail-card">
+                                <h3 class="detail-card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001z" clip-rule="evenodd"/></svg>
+                                    资源配置
+                                </h3>
+                                <div class="detail-row"><span class="label">GPU</span><span class="value">{{ data.resource_package?.gpu_model }} × {{ data.resource_package?.gpu_count }}</span></div>
+                                <div class="detail-row"><span class="label">显存</span><span class="value">{{ data.resource_package?.vram }}</span></div>
+                                <div class="detail-row"><span class="label">CPU</span><span class="value">{{ data.resource_package?.cpu_count }} 核</span></div>
+                                <div class="detail-row"><span class="label">内存</span><span class="value">{{ data.resource_package?.memory }}</span></div>
+                                <div class="detail-row"><span class="label">地区</span><span class="value">{{ data.resource_package?.region }}</span></div>
+                            </div>
+
+                            <div class="detail-card">
+                                <h3 class="detail-card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1a2 2 0 002 2h1a2 2 0 002-2V6a2 2 0 00-2-2H4z"/></svg>
+                                    价格方案
+                                </h3>
+                                <div class="detail-row"><span class="label">计费类型</span><span class="value">{{ getPlanTypeText(data.price_plan?.plan_type) }}</span></div>
+                                <div class="detail-row"><span class="label">单价</span><span class="value">\${{ data.price_plan?.price }}</span></div>
+                            </div>
+
+                            <div v-if="data.ssh" class="detail-card">
+                                <h3 class="detail-card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5z" clip-rule="evenodd"/></svg>
+                                    SSH 访问
+                                </h3>
+                                <div class="ssh-info">
+                                    <div class="ssh-info-row"><span class="label">主机</span><span>{{ data.ssh.host }}:{{ data.ssh.port }}</span></div>
+                                    <div class="ssh-info-row"><span class="label">用户</span><span>{{ data.ssh.username }}</span></div>
+                                </div>
+                                <button class="btn btn-ghost" style="margin-top: 0.75rem; width: 100%;" @click="copySSH">复制 SSH 命令</button>
+                            </div>
+
+                            <div v-if="data.jupyterlab_url" class="detail-card">
+                                <h3 class="detail-card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z"/></svg>
+                                    JupyterLab
+                                </h3>
+                                <a :href="data.jupyterlab_url" target="_blank" class="btn btn-primary" style="width: 100%;">打开 JupyterLab</a>
+                            </div>
+                        </div>
+
+                        <div class="detail-card" style="margin-top: 1.5rem;">
+                            <h3 class="detail-card-title">实例操作</h3>
+                            <div class="action-buttons">
+                                <button v-for="action in data.available_actions" :key="action"
+                                    :class="{ 'btn-ghost': action !== 'stop' && action !== 'delete', 'btn-success': action === 'start', 'btn-danger': action === 'delete' }"
+                                    class="btn" @click="performAction(action)">
+                                    {{ { stop: '停止', start: '启动', delete: '删除', renew: '续费' }[action] || action }}
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            `,
+            props: ['instanceId'],
+            setup(props) {
+                const loading = ref(true);
+                const data = reactive({});
+
+                const loadDetail = async () => {
+                    try {
+                        const res = await Api.getInstanceDetail(props.instanceId);
+                        Object.assign(data, res.data);
+                    } catch (error) {
+                        Components.toast('加载失败', 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const getPlanTypeText = (type) => ({ hourly: '按量', daily: '包天', weekly: '包周', monthly: '包月' }[type] || type);
+                const formatDateTime = (d) => Components.formatDateTime(d);
+
+                const copySSH = () => { if (data.ssh?.ssh_command) Components.copyText(data.ssh.ssh_command); };
+
+                const performAction = async (action) => {
+                    if (action === 'delete' && !await Components.confirm('确认删除', '删除后数据将无法恢复')) return;
+                    try {
+                        const actionMap = { stop: Api.stopInstance, start: Api.startInstance, delete: Api.deleteInstance };
+                        if (actionMap[action]) await actionMap[action](props.instanceId);
+                        Components.toast('操作成功');
+                        loadDetail();
+                    } catch (error) {
+                        Components.toast(error.message || '操作失败', 'error');
+                    }
+                };
+
+                onMounted(() => loadDetail());
+                return { loading, data, getPlanTypeText, formatDateTime, copySSH, performAction };
+            }
+        };
+
+        // ========== 我的实例页组件 ==========
+        const InstancesPage = {
+            template: `
+                <div>
+                    <div class="page-header">
+                        <h1 class="page-title">我的实例</h1>
+                        <p class="page-subtitle">管理您的所有计算实例</p>
+                    </div>
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                        </svg>
+                        <h3 class="empty-state-title">暂无实例</h3>
+                        <p>您还没有创建任何实例</p>
+                    </div>
+                </div>
+            `
+        };
+
+        // ========== 费用账单页组件 ==========
+        const BillingPage = {
+            template: `
+                <div>
+                    <div class="page-header">
+                        <h1 class="page-title">费用与账单</h1>
+                        <p class="page-subtitle">查看余额、账单流水和订单记录</p>
+                    </div>
+
+                    <div class="balance-card">
+                        <div class="label">账户余额</div>
+                        <div class="amount">\${{ balance.amount?.toFixed(2) || '0.00' }}</div>
+                        <div class="status">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                            {{ balance.status === 'active' ? '正常' : '异常' }}
+                        </div>
+                    </div>
+
+                    <div class="billing-tabs">
+                        <div class="billing-tab" :class="{ active: currentTab === 'records' }" @click="currentTab = 'records'; loadRecords()">账单流水</div>
+                        <div class="billing-tab" :class="{ active: currentTab === 'orders' }" @click="currentTab = 'orders'; loadOrders()">订单记录</div>
+                    </div>
+
+                    <div v-if="loading" class="loading"><div class="spinner"></div></div>
+                    <template v-else>
+                        <div v-if="currentTab === 'records'" class="record-list">
+                            <div v-for="record in records" :key="record.id" class="record-item">
+                                <div class="record-info">
+                                    <span class="record-title">{{ record.description || record.type_text }}</span>
+                                    <span class="record-meta">{{ formatDateTime(record.created_at) }}</span>
+                                </div>
+                                <span class="record-amount" :class="record.amount >= 0 ? 'positive' : 'negative'">
+                                    {{ record.amount >= 0 ? '+' : '' }}\${{ record.amount?.toFixed(2) }}
+                                </span>
+                            </div>
+                            <div v-if="records.length === 0" class="empty-state">
+                                <h3 class="empty-state-title">暂无账单流水</h3>
+                            </div>
+                        </div>
+                        <div v-else class="record-list">
+                            <div v-for="order in orders" :key="order.id" class="record-item">
+                                <div class="record-info">
+                                    <span class="record-title">{{ order.order_type_text }}</span>
+                                    <span class="record-meta">{{ order.order_no }}</span>
+                                </div>
+                                <span class="record-amount">\${{ order.amount?.toFixed(2) }}</span>
+                            </div>
+                            <div v-if="orders.length === 0" class="empty-state">
+                                <h3 class="empty-state-title">暂无订单记录</h3>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            `,
+            setup() {
+                const balance = reactive({ amount: 0, status: 'active' });
+                const records = ref([]);
+                const orders = ref([]);
+                const currentTab = ref('records');
+                const loading = ref(true);
+
+                const loadBalance = async () => {
+                    try {
+                        const res = await Api.getBalance(1);
+                        Object.assign(balance, res.data);
+                    } catch (e) {}
+                };
+
+                const loadRecords = async () => {
+                    loading.value = true;
+                    try {
+                        const res = await Api.getBills(1);
+                        records.value = res.data || [];
+                    } catch (e) {} finally { loading.value = false; }
+                };
+
+                const loadOrders = async () => {
+                    loading.value = true;
+                    try {
+                        const res = await Api.getOrders(1);
+                        orders.value = res.data || [];
+                    } catch (e) {} finally { loading.value = false; }
+                };
+
+                const formatDateTime = (d) => Components.formatDateTime(d);
+
+                onMounted(async () => {
+                    await loadBalance();
+                    loadRecords();
+                });
+
+                return { balance, records, orders, currentTab, loading, loadRecords, loadOrders, formatDateTime };
+            }
+        };
+
+        // ========== 路由配置 ==========
+        const routes = [
+            { path: '/', name: 'market', component: MarketPage },
+            { path: '/create/:packageId', name: 'create', component: CreatePage, props: true },
+            { path: '/creating/:taskId', name: 'creating', component: CreatingPage, props: true },
+            { path: '/instances', name: 'instances', component: InstancesPage },
+            { path: '/instance/:instanceId', name: 'instance-detail', component: InstanceDetailPage, props: true },
+            { path: '/billing', name: 'billing', component: BillingPage },
+        ];
+
+        const router = createRouter({
+            history: createWebHashHistory(),
+            routes
+        });
+
+        // ========== App 根组件 ==========
+        const App = {
+            template: `
+                <div>
+                    <header class="header">
+                        <div class="container">
+                            <h1 class="logo">算力市场</h1>
+                            <nav class="nav">
+                                <router-link to="/" class="nav-link" :class="{ active: $route.name === 'market' }">市场</router-link>
+                                <router-link to="/instances" class="nav-link" :class="{ active: $route.name === 'instances' }">我的实例</router-link>
+                                <router-link to="/billing" class="nav-link" :class="{ active: $route.name === 'billing' }">费用与账单</router-link>
+                            </nav>
+                        </div>
+                    </header>
+                    <main class="main">
+                        <div class="container">
+                            <router-view />
+                        </div>
+                    </main>
+                </div>
+            `
+        };
+
+        // ========== 创建并挂载 Vue 应用 ==========
+        createApp(App).use(router).mount('#app');
+    </script>
+</body>
+</html>
